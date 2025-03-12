@@ -1,0 +1,167 @@
+import pandas as pd 
+import numpy as np 
+import geopandas as gpd 
+from sklearn.ensemble import RandomForestRegressor 
+from sklearn.model_selection import train_test_split 
+from sklearn.metrics import mean_absolute_error 
+from sklearn.pipeline import Pipeline 
+from sklearn.preprocessing import StandardScaler, OneHotEncoder 
+from sklearn.compose import ColumnTransformer 
+import networkx as nx 
+Install OpenStreetMap Library 
+pip install osmnx 
+Query example for Koramangala and save to GeoJSON file 
+import osmnx as ox 
+# Define the area of interest 
+place_name = "Koramangala 4th Block, Bangalore, India" 
+# Download road network data 
+G = ox.graph_from_place(place_name, network_type='all') 
+# Convert the graph to a GeoDataFrame 
+nodes, edges = ox.graph_to_gdfs(G) 
+# Identify columns with list values 
+list_columns = [col for col in edges.columns if edges[col].apply(lambda x: isinstance(x, list)).any()]  # 
+Modified line 
+# Handle list columns (example: convert to strings) 
+for col in list_columns: 
+edges[col] = edges[col].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, list) else x) 
+# Save to GeoJSON 
+edges.to_file("koramangala_road_segments.geojson", driver='GeoJSON') 
+Display all the Content 
+!cat koramangala_road_segments.geojson 
+Load Real-Time Traffic Data 
+road_segments = gpd.read_file('koramangala_road_segments.geojson') 
+road_segments['current_speed'] = np.random.uniform(low=15, high=60, size=len(road_segments))  # 
+Simulated data 
+Display first few Columns of the data 
+print(road_segments.columns) 
+print(road_segments.head()) 
+#contents of the GeoJSON file 
+!head koramangala_road_segments.geojson 
+ETA Calculation 
+road_segments['eta'] = road_segments['length'] / road_segments['current_speed'] 
+Feature Engineering 
+# Extract features from osmid 
+road_segments['num_nodes'] = road_segments['osmid'].apply(lambda x: len(x) if isinstance(x, list) else 
+0) 
+# Extract features from highway 
+road_segments['highway_type'] = road_segments['highway'].apply(lambda x: x.split(',')[0] if 
+isinstance(x, str) else 'unknown') 
+# One-hot encode categorical features 
+transformer = ColumnTransformer( 
+transformers=[ 
+('onehot', OneHotEncoder(), ['highway_type']), 
+], 
+remainder='passthrough' 
+) 
+# Apply transformations 
+features = transformer.fit_transform(road_segments) 
+target = road_segments['eta'] 
+Feature Selection 
+features = ['length', 'current_speed', 'reversed'] 
+X = road_segments[features] 
+y = road_segments['eta'] 
+Spliting data 
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42) 
+Preprocessing Pipeline 
+numeric_features = ['length', 'current_speed'] 
+numeric_transformer = StandardScaler() 
+preprocessor = ColumnTransformer( 
+transformers=[ 
+('num', numeric_transformer, numeric_features) 
+]) 
+Define the model 
+model = Pipeline(steps=[('preprocessor', preprocessor), 
+('regressor', RandomForestRegressor(n_estimators=100, random_state=42))]) 
+Model Training 
+model.fit(X_train, y_train) 
+y_pred = model.predict(X_test) 
+mae = mean_absolute_error(y_test, y_pred) 
+print(f'Mean Absolute Error: {mae:.4f}') 
+Mean Absolute Error: 0.2622 
+Dynamic Routing and Real-Time ETA Prediction 
+# Create a graph from the road segments 
+G = nx.Graph() 
+for _, row in road_segments.iterrows(): 
+G.add_edge(row['u'], row['v'], length=row['length'], eta=row['eta']) 
+# Function to calculate the best route based on current ETA predictions 
+def calculate_route(G, start_node, end_node): 
+return nx.shortest_path(G, source=start_node, target=end_node, weight='eta') 
+# Calculate the best route between two nodes 
+start_node = 305092002 
+end_node = 6065186792 
+route = calculate_route(G, start_node, end_node) 
+print('Optimal Route:', route) 
+Optimal Route: [305092002, 6065186792] 
+Real-Time ETA Updates
+# Create a graph from the road segments 
+G = nx.Graph() 
+# 'road_segments' is the DataFrame containing the road data 
+for _, row in road_segments.iterrows(): 
+G.add_edge(row['u'], row['v'], segment_id=row.name, length=row['length'], eta=row['eta']) 
+# Update ETAs dynamically as traffic conditions changes 
+def update_eta(G, current_traffic_data): 
+for u, v, data in G.edges(data=True): 
+segment_id = data['segment_id'] 
+current_speed = current_traffic_data.loc[segment_id, 'current_speed'] 
+# Update the ETA based on the new current speed 
+G[u][v]['eta'] = G[u][v]['length'] / current_speed 
+# Calculate the best route based on updated ETA predictions 
+def calculate_route(G, start_node, end_node): 
+return nx.shortest_path(G, source=start_node, target=end_node, weight='eta') 
+# Calculate the total ETA for a given route 
+def calculate_total_eta(G, route): 
+total_eta = 0 
+for i in range(len(route) - 1): 
+total_eta += G[route[i]][route[i + 1]]['eta'] 
+return total_eta 
+# Update with new simulated traffic data 
+current_traffic_data = road_segments.copy() 
+current_traffic_data['current_speed'] = np.random.uniform(low=10, high=55, 
+size=len(current_traffic_data))  # Simulate new traffic data 
+# Update the graph with the new ETA values 
+update_eta(G, current_traffic_data) 
+# Calculate the updated optimal route between two nodes using 'u' and 'v' as identifiers 
+start_node = 305092001 
+end_node =  305092003 
+# Calculate the optimal route 
+updated_route = calculate_route(G, start_node, end_node) 
+print('Updated Optimal Route:', updated_route) 
+# Calculate and print the total ETA for the route 
+total_eta = calculate_total_eta(G, updated_route) 
+print(f'Total ETA for the route: {total_eta:.2f} hours') 
+Updated Optimal Route: [305092001, 305092003] 
+Total ETA for the route: 0.73 hours 
+Visual representation of optimal route and total ETA on Maps 
+import folium 
+# Get the center coordinates for the map 
+center_lat = road_segments['geometry'].centroid.y.mean() 
+center_lon = road_segments['geometry'].centroid.x.mean() 
+# Create a Folium map centered on the area of interest 
+m = folium.Map(location=[center_lat, center_lon], zoom_start=15) 
+# Plot the road segments 
+for _, row in road_segments.iterrows(): 
+folium.PolyLine(locations=[list(row['geometry'].coords[0]), list(row['geometry'].coords[-1])], 
+color='blue', 
+weight=2.5, 
+opacity=1).add_to(m) 
+# Highlight the optimal route in red 
+route_coords = [(road_segments.loc[road_segments['u'] == u, 'geometry'].iloc[0].coords[-1][1], 
+road_segments.loc[road_segments['u'] == u, 'geometry'].iloc[0].coords[-1][0]) 
+for u in updated_route] 
+folium.PolyLine(locations=route_coords, color='red', weight=5, opacity=1).add_to(m) 
+# Add markers for the start and end nodes 
+folium.Marker(location=route_coords[0], 
+icon=folium.Icon(color='green', icon='play'), 
+popup='Start').add_to(m) 
+folium.Marker(location=route_coords[-1], 
+icon=folium.Icon(color='red', icon='stop'), 
+popup='End').add_to(m) 
+# Display the total ETA on the map 
+folium.Marker(location=[center_lat, center_lon], 
+icon=folium.DivIcon( 
+icon_size=(150,36), 
+icon_anchor=(7,20), 
+html=f'Total ETA: {total_eta:.2f} hours' 
+)).add_to(m) 
+# Display the map
+
